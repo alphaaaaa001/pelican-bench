@@ -17,3 +17,17 @@ Thumbs.db
 # 输出产物（体检报告之类）
 out/
 *.out.txt
+
+# .NET 构建产物
+# 注意：bin/ 在本仓库是 bin/svgcheck.cmd（解释器探测包装器）的家，
+# 不能整个忽略 —— 只忽略 .NET 项目自己的 bin/ 与 obj/（它们在 src/ 和 tests/ 之下）
+src/**/bin/
+src/**/obj/
+tests/**/bin/
+tests/**/obj/
+*.user
+.vs/
+*.BinaryLog*/
+
+# 发布产物（self-contained 与 framework-dependent 两个 zip）
+dist/

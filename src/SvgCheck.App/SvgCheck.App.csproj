@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 双击即用的图形壳。判据一律委托 SvgCheck.Core —— App 里不许出现任何几何计算。 -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>pelican-bench</AssemblyName>
+    <RootNamespace>SvgCheck.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.1.0</Version>
+    <Product>pelican-bench</Product>
+    <AssemblyTitle>svgcheck 桌面版</AssemblyTitle>
+    <SatelliteResourceLanguages>zh-CN</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SvgCheck.Core\SvgCheck.Core.csproj" />
+  </ItemGroup>
+
+</Project>

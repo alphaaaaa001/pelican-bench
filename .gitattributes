@@ -7,3 +7,10 @@
 *.ico  binary
 *.woff binary
 *.woff2 binary
+
+# cmd.exe 按【字节偏移】解析 goto 标签，所以批处理必须是 CRLF。
+# 若沿用上面的 text=auto eol=lf，checkout 时会把 .cmd 转成 LF，
+# 于是 cmd.exe 会落到一行的中间去执行（实测：执行到 heck.cmd 并死循环）。
+# 这条规则是 bin/svgcheck.cmd 能被人 clone 下来直接用的前提。
+*.cmd  text eol=crlf
+*.bat  text eol=crlf

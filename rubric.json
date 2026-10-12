@@ -1,0 +1,376 @@
+{
+  "version": 1,
+  "_contract": {
+    "这是什么": "判据的唯一真源。svgcheck.py 与 SvgCheck.Core 都必须从这里读权重、容差、判据文案、角色依赖。",
+    "铁律": [
+      "任何一方不得在代码里硬编码 weight / tolerance / 判据文案 —— 否则两把尺子会漂移",
+      "verdict=unknown 表示『本工具无资格判这项』，从分子与分母同时剔除；既不得分也不扣分（工程笔记 2：检测不到 ≠ 没有）",
+      "新增规则必须同时给出 unknown 文案与 requires，不允许只写判通过的路径（工程笔记 4：验不了 ≠ 通过）",
+      "本文件只放【策略】：权重、容差、文案、依赖。几何怎么算是【实现】，写在代码里并按 rule.id 分派"
+    ],
+    "打分": {
+      "得分": "round(100 * Σ(weightᵢ·scoreᵢ) / Σ(weightᵢ))，仅统计 scoreᵢ ≠ null 的规则",
+      "覆盖率": "Σ(weightᵢ of 已判规则) / Σ(weightᵢ of 全部规则)",
+      "低置信": "覆盖率 < low_coverage 时，总分必须与警示同屏显示",
+      "scale_note": "score 是 0..1 的连续量，verdict 是它的离散标签；两者都由 criteria 决定"
+    },
+    "criteria 语义": "自上而下第一条命中的生效。max_abs 比 |value|，max 比 value，min 比 value，都不填则是兜底 else。",
+    "占位符": "文案里的 {name} 由该规则的 measured 字典填充；取不到的占位符原样保留，不静默吞掉。",
+    "格式方言": "占位符的格式说明符一律用 **Python f-string 方言**：{v:+.0f} / {v:.2f} / {v:d}。Python 侧原生支持；C# 侧自己翻译（.NET 自定义格式串不认 'f' 后缀，会把 256 渲染成 '256.0f'）。契约不迁就任何一方。",
+    "measured 必备键": "文案里出现的每个占位符都必须由该规则的 measured 提供，包括派生键 {sign}（由 diff 符号给的口语）与 {absdiff}。规则实现要保证 criteria 用到的键全部存在 —— 缺键会以字面量形式暴露在报告里，那就是回归测试的信号。"
+  },
+
+  "_report": {
+    "这是什么": "两把尺子的输出契约。svgcheck.py --json 与 SvgCheck.Core 必须产出同形 JSON。",
+    "对拍口径": [
+      "严格比对：rules[].id、rules[].verdict、rules[].score、summary.score、summary.coverage",
+      "仅展示不比对：rules[].measured 的具体键与数值精度、rules[].text 的措辞 —— 两侧算法实现不同（C# 认 transform、Py 不认），比数值只会制造噪声",
+      "verdict 取值域固定为 pass|warn|fail|unknown，越界即视为实现违约",
+      "score 取值域 [0,1] 或 null；verdict=unknown 时 score 必为 null 且该规则不入分母"
+    ],
+    "schema": {
+      "tool": "string，如 svgcheck.py / SvgCheck.Core",
+      "rubric_version": "int，必须与 rubric.json 的 version 一致，否则拒绝对拍",
+      "file": "string，被检文件的 basename",
+      "bytes": "int",
+      "viewbox": "[x,y,w,h] 或 null",
+      "degraded": "bool —— true 表示 XML 解析失败已降级为宽松解析，几何结论置信度降低",
+      "roles": "{role_id: [ {kind, x/y 或 cx/cy/r 或 bbox} ]} —— **一律是数组**。脚有两只、踏板有两块，单对象装不下；未认定的角色不出现该键。数组元素带 auto:true/false 标明是推定还是用户指派。",
+      "info": "{informational_id: {...}} —— 不计分，仅陈述",
+      "rules": "[{id, group, weight, verdict, score, measured, text}] —— 顺序须与 rubric.json 声明顺序一致",
+      "summary": "{score, coverage, judged, unknown, low_coverage}"
+    },
+    "summary 定义": {
+      "score": "round(100 * Σ(w·s)/Σw)，仅 s≠null 者；Σw 为 0 时 score 为 null",
+      "coverage": "Σ(w of 已判) / Σ(w of 全部)，保留 4 位小数",
+      "judged": "已判规则条数",
+      "unknown": "无判据条数",
+      "low_coverage": "bool = coverage < tolerances.low_coverage"
+    }
+  },
+
+  "evidence_policy": {
+    "这是什么": "每条规则的『缺席是否可证』。它决定检不到东西时给 fail 还是 unknown —— 这是工程笔记 2 的可执行化。",
+    "geometric": {
+      "语义": "缺席可以被几何证明。给 fail 是诚实的。",
+      "rules": ["wheel_ground_contact", "ground_clear_of_wheels", "wheels_separated",
+                "heading_consistent", "feet_on_pedals", "seat_on_seat_tube",
+                "frame_triangles", "beak_length", "within_canvas", "gradient_depth",
+                "spokes_present"]
+    },
+    "hybrid": {
+      "语义": "先试几何法；几何无定论时退回名称/启发式；两者都给不出正面证据 ⇒ **unknown，不是 fail**。",
+      "rules": ["crank_pedals", "pouch_present", "feather_strokes", "eye_present"],
+      "为什么": "这些依赖作者的命名习惯或画风。第一版对着 sample-pelican.html 报『喉囊未检测到』，可它明明画了一个很大的下垂喉囊，只是没写 class —— 诬告一次，整把尺子就不可信了。"
+    },
+    "实现约束": "hybrid 规则若拿不出正面证据，必须输出 verdict=unknown / score=null，且 text 用该规则的 unknown 文案。禁止用 fail 表达『我不知道』。"
+  },
+
+  "tolerances": {
+    "ground_touch_px": 6,
+    "ground_touch_warn_px": 24,
+    "foot_pedal_px": 12,
+    "seat_hook_px": 14,
+    "vertex_merge_px": 8,
+    "heading_eps": 4,
+    "spoke_min_ge": 8,
+    "feather_max_stroke_px": 6,
+    "beak_head_ratio": 1.0,
+    "canvas_margin_px": 0,
+    "bg_cover_frac": 0.95,
+
+    "_几何比例说明": "下面这组不是像素容差，是【判据形状】：眼要多小、囊要垂到什么程度、曲柄要多长。它们决定 verdict，所以同样受铁律 1 约束 —— 两侧都不得硬编码，必须从这里读。否则两把尺子会在同一个元素上给出不同 verdict，对拍就成了碰运气。",
+
+    "_两条放水教训": [
+      "eye_max_luminance：只靠『小圆 + 在上半区』会把月亮上的环形山数成眼睛（2026-10-12 实测报『3 只眼』）。眼睛是对比特征，多半是深色的 —— 要求亮度低于此值，或 class 名明说它是眼。找不到深色小圆就给 unknown，不给 fail：有些画风眼睛就是白的。亮度按 Rec.709 算：(0.2126R + 0.7152G + 0.0722B)/255，R/G/B 取 0..255。**公式也必须两侧一致**，用 Rec.601 的会给出不同 verdict。",
+      "bg_cover_frac：满画布的背景矩形会被当成『主体』，于是留白恒为 0、within_canvas 对白送分，而且**真的被裁切的图也照样过**（背景顶着画布边）。判裁切要看的是鸟和车，不是那张天。这条同时收紧 pouch 与 eye 用来归一化的取景框。"
+    ],
+
+    "eye_rmax_of_wheel": 0.15,
+    "eye_rmax_of_width": 0.03,
+    "eye_rmin_of_width": 0.004,
+    "eye_top_frac": 0.40,
+    "eye_max_luminance": 0.45,
+
+    "pouch_min_aspect": 0.40,
+    "pouch_min_width_frac": 0.05,
+    "pouch_center_top_frac": 0.40,
+    "pouch_bottom_max_frac": 0.50,
+    "pouch_above_overlap_frac": 0.50,
+
+    "crank_span_inset_frac": 0.15,
+    "crank_axle_frac": 0.60,
+    "crank_arm_min_frac": 0.15,
+    "crank_arm_max_frac": 1.00,
+    "crank_opposite_cos": -0.30,
+    "crank_len_ratio": 1.65,
+    "crank_platform_min_frac": 0.20,
+    "crank_platform_max_frac": 3.00,
+    "crank_platform_rad_merge_mult": 2.0,
+    "crank_platform_rad_arm_mult": 0.5,
+
+    "feather_diag_frac": 0.25,
+    "low_coverage": 0.6
+  },
+
+  "roles": [
+    { "id": "wheel_rear",   "name": "后轮",     "kind": "circle", "hint": "车架后三角接的那只轮" },
+    { "id": "wheel_front",  "name": "前轮",     "kind": "circle", "hint": "前叉末端接的那只轮" },
+    { "id": "ground",       "name": "地面线",   "kind": "line",   "hint": "车应当站在它上面" },
+    { "id": "seat",         "name": "座垫",     "kind": "any",    "hint": "鹈鹕屁股坐的东西" },
+    { "id": "seat_tube_top","name": "座管顶端", "kind": "point",  "hint": "座垫应当挂在它正上方" },
+    { "id": "handlebar",    "name": "车把",     "kind": "any",    "hint": "翅膀扶的那根" },
+    { "id": "beak_tip",     "name": "喙尖",     "kind": "point",  "hint": "决定鸟的朝向" },
+    { "id": "eye",          "name": "眼",       "kind": "point",  "hint": "与喙尖共同决定朝向与头径" },
+    { "id": "pouch",        "name": "喉囊",     "kind": "any",    "hint": "下垂的大囊，不是尖嘴" },
+    { "id": "foot",         "name": "脚",       "kind": "point",  "multi": true, "hint": "应当落在踏板上（两只都要标）" },
+    { "id": "pedal",        "name": "踏板",     "kind": "any",    "multi": true, "hint": "曲柄末端的平台（两块都要标）" }
+  ],
+
+  "groups": [
+    {
+      "id": "relation",
+      "name": "几何关系",
+      "_why": "README 第 1 条：零件齐全是最容易骗过眼睛的合格证，真正会坏的是关系。所以这组权重最高。",
+      "rules": [
+        {
+          "id": "wheel_ground_contact",
+          "name": "轮底贴地",
+          "weight": 14,
+          "requires": ["wheel_rear", "wheel_front", "ground"],
+          "measure": "ground_y - wheel_bottom_y",
+          "criteria": [
+            { "max_abs": "@ground_touch_px",     "score": 1.0, "verdict": "pass", "text": "轮底 y={wheel_bottom} 与地面 y={ground} 贴合，差 {diff:+.0f}px（容差 ±{ground_touch_px}）" },
+            { "max_abs": "@ground_touch_warn_px","score": 0.5, "verdict": "warn", "text": "轮子{sign}地面 {absdiff:.0f}px —— 轻微，但肉眼已能察觉" },
+            { "score": 0.0, "verdict": "fail", "text": "轮子{sign}地面 {absdiff:.0f}px —— 车没有站在路上" }
+          ],
+          "unknown": "缺角色 {missing}，无法确定谁是轮子或谁是地面（工程笔记 2：不当作没画）",
+          "why": "三条铁律之「真的接触吗」：不是离得近，是落在上面"
+        },
+        {
+          "id": "ground_clear_of_wheels",
+          "name": "地面线不横穿轮子",
+          "weight": 10,
+          "requires": ["wheel_rear", "wheel_front", "ground"],
+          "measure": "count(水平线段与其 x 区间重叠的轮子，且 y 落入轮内)",
+          "criteria": [
+            { "max": 0, "score": 1.0, "verdict": "pass", "text": "没有横向构件穿过轮子内部" },
+            { "max": 1, "score": 0.5, "verdict": "warn", "text": "{count} 条横线穿过轮子（x 区间已校验重叠，非误报）" },
+            { "score": 0.0, "verdict": "fail", "text": "{count} 条横线穿过轮子 —— 地面线从轮子里透出来了" }
+          ],
+          "unknown": "缺角色 {missing}",
+          "why": "轮圈多为 fill:none，地面线一旦落在轮内就会透视成穿模。判定必须同时校验 x 区间重叠——只比 y 会把踏板、车把误报成地面（本工具真实踩过的坑）"
+        },
+        {
+          "id": "wheels_separated",
+          "name": "两轮不重叠",
+          "weight": 10,
+          "requires": ["wheel_rear", "wheel_front"],
+          "measure": "center_distance - (r1 + r2)",
+          "criteria": [
+            { "min": 0, "score": 1.0, "verdict": "pass", "text": "中心距 {dist:.0f} ≥ 半径和 {sumr:.0f}，轮距 {gap:.0f}px" },
+            { "min": -0.15, "score": 0.5, "verdict": "warn", "text": "两轮轻微相交 {absdiff:.0f}px" },
+            { "score": 0.0, "verdict": "fail", "text": "两轮重叠 {absdiff:.0f}px —— 结构已废" }
+          ],
+          "unknown": "找不出成对的圆（缺 {missing}）。注意：这也可能是画风特殊，不等于没画轮子",
+          "why": "两轮相交基本就废了，但它是最容易被「零件齐全」掩盖的硬伤之一"
+        },
+        {
+          "id": "heading_consistent",
+          "name": "朝向与车头一致",
+          "weight": 10,
+          "requires": ["beak_tip", "eye", "wheel_rear", "wheel_front"],
+          "measure": "sign(beak_tip.x - eye.x) vs sign(wheel_front.x - wheel_rear.x)",
+          "criteria": [
+            { "min": 1, "score": 1.0, "verdict": "pass", "text": "头朝{bird}（喙尖 x={beak} vs 眼 x={eye}），车朝{bike}（前轮 x={front} vs 后轮 x={rear}）—— 一致" },
+            { "score": 0.0, "verdict": "fail", "text": "鸟头朝{bird}、车却朝{bike} —— 鹈鹕背对骑行方向（喙尖 x={beak}，眼 x={eye}，前轮 x={front}）" }
+          ],
+          "unknown": "需指派 {missing}。此前该规则只能列入人工清单，因为自动认错元素就是诬告",
+          "why": "sample-pelican.html 的三处硬伤之首：喙尖 420 ← 喙根 555 ← 眼 607，头朝左而车朝右"
+        },
+        {
+          "id": "feet_on_pedals",
+          "name": "脚落在踏板上",
+          "weight": 8,
+          "requires": ["foot", "pedal"],
+          "measure": "min_distance(foot, pedal)",
+          "criteria": [
+            { "max_abs": "@foot_pedal_px", "score": 1.0, "verdict": "pass", "text": "脚与踏板最近距离 {dist:.0f}px（容差 {foot_pedal_px}）" },
+            { "max_abs": 36, "score": 0.5, "verdict": "warn", "text": "脚离踏板 {dist:.0f}px —— 差一点踩上" },
+            { "score": 0.0, "verdict": "fail", "text": "脚离踏板 {dist:.0f}px —— 在蹬空气" }
+          ],
+          "unknown": "需指派 {missing}",
+          "why": "「明显在蹬」是 v2 题面的逐条可核项之一"
+        },
+        {
+          "id": "seat_on_seat_tube",
+          "name": "座垫挂在座管顶端",
+          "weight": 8,
+          "requires": ["seat", "seat_tube_top"],
+          "measure": "|seat_center_x - seat_tube_top_x|",
+          "criteria": [
+            { "max_abs": "@seat_hook_px", "score": 1.0, "verdict": "pass", "text": "座垫中点 x={seat} 对座管顶 x={tube}，偏 {dx:+.0f}px" },
+            { "max_abs": 60, "score": 0.5, "verdict": "warn", "text": "座垫偏离座管顶 {dx:.0f}px" },
+            { "score": 0.0, "verdict": "fail", "text": "座垫偏离座管顶 {dx:.0f}px —— 它被画到车把上去了" }
+          ],
+          "unknown": "需指派 {missing}",
+          "why": "三条铁律之「挂点对吗」：sample-pelican.html 的座垫中点 x=575 正压在车把根部 (575,350) 上，而座管顶在 x=500"
+        }
+      ]
+    },
+    {
+      "id": "parts",
+      "name": "部件齐备",
+      "_why": "可枚举、可数，所以最容易骗人；权重低于关系组是有意的。",
+      "rules": [
+        {
+          "id": "spokes_present",
+          "name": "辐条",
+          "weight": 8,
+          "requires": ["wheel_rear", "wheel_front"],
+          "measure": "count(落在轮环内的径向线段)，优先几何而非 class 名",
+          "criteria": [
+            { "min": "@spoke_min_ge", "score": 1.0, "verdict": "pass", "text": "{count} 根（几何法：端点落在轮环内的径向线段）" },
+            { "min": 4, "score": 0.5, "verdict": "warn", "text": "仅 {count} 根，多半只有个圈" },
+            { "score": 0.0, "verdict": "fail", "text": "一根都没有 —— 车轮塌成两个圈" }
+          ],
+          "unknown": "未识别出轮子，故无从数辐条",
+          "why": "v2 题面明确要求「must have spokes」。注意用几何数而不是搜 class=\"spoke\"——命名习惯不同就搜不到"
+        },
+        {
+          "id": "frame_triangles",
+          "name": "车架双三角",
+          "weight": 6,
+          "requires": [],
+          "measure": "count(由直线段围成且顶点互相重合的三角形)",
+          "criteria": [
+            { "min": 2, "score": 1.0, "verdict": "pass", "text": "{count} 个三角，共用节点已合并（容差 {vertex_merge_px}px）" },
+            { "min": 1, "score": 0.5, "verdict": "warn", "text": "只有 {count} 个三角 —— 主三角或后三角缺一个" },
+            { "score": 0.0, "verdict": "fail", "text": "一个三角都没有 —— 不是自行车车架" }
+          ],
+          "unknown": "直线段太少，构不成可判的图",
+          "why": "v2 题面：「correctly shaped bicycle frame」。真车架是主三角 + 后三角共用座管"
+        },
+        {
+          "id": "crank_pedals",
+          "name": "曲柄与踏板",
+          "weight": 5,
+          "requires": [],
+          "measure": "exists(自五通伸出的短段) and exists(其末端的横向平台)",
+          "criteria": [
+            { "min": 2, "score": 1.0, "verdict": "pass", "text": "检出 {count} 处曲柄/踏板构件" },
+            { "min": 1, "score": 0.5, "verdict": "warn", "text": "仅 {count} 处 —— 单边" },
+            { "score": 0.0, "verdict": "fail", "text": "未检出曲柄或踏板" }
+          ],
+          "unknown": "未识别出五通（链条传动的中心）",
+          "why": "没有曲柄就不存在「蹬」"
+        },
+        {
+          "id": "pouch_present",
+          "name": "喉囊",
+          "weight": 5,
+          "requires": [],
+          "measure": "exists(喙下方下垂的封闭曲面)",
+          "criteria": [
+            { "min": 1, "score": 1.0, "verdict": "pass", "text": "检出下垂喉囊（{how}）" },
+            { "score": 0.0, "verdict": "fail", "text": "只有一根尖嘴" }
+          ],
+          "unknown": "未能确认喉囊 —— 可能是没写 class，也可能是画风不同，**不能当作没画**",
+          "why": "鹈鹕的定义性特征，也是 v2 题面的逐条可核项。sample-pelican.html 明明画了很大一个，第一版却报「未检测到」——那正是工程笔记 2 的来历"
+        },
+        {
+          "id": "feather_strokes",
+          "name": "羽毛笔画",
+          "weight": 4,
+          "requires": [],
+          "measure": "count(羽轴/羽枝状的短曲线笔画) —— 必须是细描边：stroke-width ≤ @feather_max_stroke_px",
+          "measure_注": "脖子也是一条粗曲线（stroke-width 26），不加这条约束它会被当成羽毛笔画白送分。羽毛细节是细线，躯干轮廓是粗描边，粗细是可用的不变量。",
+          "criteria": [
+            { "min": 2, "score": 1.0, "verdict": "pass", "text": "{count} 处羽毛笔画" },
+            { "min": 1, "score": 0.5, "verdict": "warn", "text": "仅 {count} 处" },
+            { "score": 0.0, "verdict": "fail", "text": "无羽毛笔画 —— 身子是个光滑椭圆" }
+          ],
+          "unknown": "命名与画法差异过大，无法可靠计数",
+          "why": "v2 题面：「a clear indication of feathers」"
+        },
+        {
+          "id": "beak_length",
+          "name": "喙长 ≥ 头径",
+          "weight": 4,
+          "requires": ["beak_tip", "eye"],
+          "measure": "beak_len / head_diameter",
+          "criteria": [
+            { "min": "@beak_head_ratio", "score": 1.0, "verdict": "pass", "text": "喙长 {beak:.0f} / 头径 {head:.0f} = {ratio:.2f}" },
+            { "min": 0.6, "score": 0.5, "verdict": "warn", "text": "比值 {ratio:.2f}，喙偏短" },
+            { "score": 0.0, "verdict": "fail", "text": "比值 {ratio:.2f} —— 这是鸭嘴不是鹈鹕" }
+          ],
+          "unknown": "需指派 {missing} 才能量喙",
+          "why": "鹈鹕的喙长过头部直径，是比例探针"
+        },
+        {
+          "id": "eye_present",
+          "name": "眼睛",
+          "weight": 2,
+          "requires": [],
+          "measure": "exists(头部范围内的小圆)",
+          "criteria": [
+            { "min": 1, "score": 1.0, "verdict": "pass", "text": "{count} 只眼" },
+            { "score": 0.0, "verdict": "fail", "text": "无眼" }
+          ],
+          "unknown": "未识别出头，故无从判断有无眼",
+          "why": "人工清单第 ⑥ 项，但它客观可数，所以不必留在人工清单"
+        }
+      ]
+    },
+    {
+      "id": "presentation",
+      "name": "呈现",
+      "_why": "权重最低：这些影响观感，不影响「这只鹈鹕有没有骑车」。",
+      "rules": [
+        {
+          "id": "within_canvas",
+          "name": "主体未被画布裁切",
+          "weight": 4,
+          "requires": [],
+          "measure": "min(主体包围盒到 viewBox 四边的距离)",
+          "criteria": [
+            { "min": "@canvas_margin_px", "score": 1.0, "verdict": "pass", "text": "四周留白最小 {margin:.0f}px" },
+            { "score": 0.0, "verdict": "fail", "text": "主体超出画布 {absdiff:.0f}px —— 被裁掉了" }
+          ],
+          "unknown": "没有 viewBox，无从判断裁切",
+          "why": "留白 13px 与留白 -20px 是两种完全不同的产出"
+        },
+        {
+          "id": "gradient_depth",
+          "name": "渐变/着色层次",
+          "weight": 2,
+          "requires": [],
+          "measure": "渐变数 > 0 ? 100 + 渐变数 : 纯色层数",
+          "measure_注": "合成值。>100 表示真有渐变；≤100 时它就是纯色层数，让『无渐变但有多层纯色』仍能落到 warn 档。两条 criteria 比的是同一个值，靠 100 这个量级差分开。",
+          "criteria": [
+            { "min": 100, "score": 1.0, "verdict": "pass", "text": "{gradients} 个渐变" },
+            { "min": 3, "score": 0.5, "verdict": "warn", "text": "无渐变，但有 {layers} 层纯色，勉强算有层次" },
+            { "score": 0.0, "verdict": "fail", "text": "单色平涂（仅 {layers} 层）" }
+          ],
+          "unknown": "无法统计着色层数",
+          "why": "最低权重项：它区分「用心」与「敷衍」，但不区分「会不会画」"
+        }
+      ]
+    }
+  ],
+
+  "informational": [
+    { "id": "animation", "name": "动画", "text": "{keyframes} 个关键帧 / {decls} 处声明", "scored": false,
+      "why": "静态图也能过关，不算硬伤 —— 所以计入信息、不计入分母（工程笔记 4）" },
+    { "id": "bytes",   "name": "文件大小", "scored": false },
+    { "id": "viewbox", "name": "viewBox",  "scored": false },
+    { "id": "counts",  "name": "元素计数", "scored": false }
+  ],
+
+  "manual_only": [
+    { "id": "breeding_plumage", "name": "繁殖期羽色是否符合加州棕鹈鹕",
+      "why": "需要物种知识，几何给不出证据。冷知识：当时没有任何一家模型意识到加州棕鹈鹕繁殖期其实不是棕色。" },
+    { "id": "is_pelican", "name": "整体是不是一只鹈鹕",
+      "why": "审美与语义判断没有判据（工程笔记 5），工具对此一个字节都不说" }
+  ]
+}

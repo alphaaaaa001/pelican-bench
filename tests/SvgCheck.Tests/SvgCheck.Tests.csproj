@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 控制台断言跑器。不引 xUnit/NUnit：保持零 NuGet，且与 svgcheck.py 的自检开关同构。
+       它同时承担三件事：移植自检、相对坐标与 x 重叠回归、双尺对拍。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>SvgCheck.Tests</AssemblyName>
+    <RootNamespace>SvgCheck.Tests</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SvgCheck.Core\SvgCheck.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 判据与几何内核。刻意不牵 WPF：tests 跑器要能直接驱动它做对拍。
+       目标 net8.0 而非 netstandard2.0 —— 后者不含 System.Text.Json，
+       引它就得引 NuGet 包，而本仓库的铁律是零外部依赖。 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>SvgCheck.Core</AssemblyName>
+    <RootNamespace>SvgCheck.Core</RootNamespace>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>
